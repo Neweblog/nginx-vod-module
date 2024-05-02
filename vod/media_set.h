@@ -129,6 +129,7 @@ typedef struct {
 	bool_t use_discontinuity;
 	bool_t presentation_end;
 	bool_t cache_mapping;
+	int64_t time_offset;
 
 	uint32_t clip_count;					// number of clips relevant to serve the current request
 	uint32_t sequence_count;

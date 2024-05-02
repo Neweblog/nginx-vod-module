@@ -20,6 +20,6 @@ media_set_get_segment_time_millis(media_set_t* media_set)
 		}
 	}
 
-	return cur_track->original_clip_time +
+	return cur_track->original_clip_time - media_set->time_offset +
 		rescale_time(cur_track->first_frame_time_offset, cur_track->media_info.timescale, 1000);
 }
