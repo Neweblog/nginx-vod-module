@@ -129,7 +129,6 @@ typedef struct {
 	bool_t use_discontinuity;
 	bool_t presentation_end;
 	bool_t cache_mapping;
-	int64_t time_offset;
 
 	uint32_t clip_count;					// number of clips relevant to serve the current request
 	uint32_t sequence_count;
@@ -188,7 +187,6 @@ typedef struct {
 	uint32_t height;
 } request_params_t;
 
-
-int64_t media_set_get_segment_time_millis(media_set_t* media_set);
+int64_t media_set_get_segment_time_millis(media_set_t* media_set, request_context_t* request_context);
 
 #endif //__MEDIA_SET_H__

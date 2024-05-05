@@ -1419,7 +1419,6 @@ media_set_parse_live_params(
 	if (params[MEDIA_SET_PARAM_TIME_OFFSET] != NULL)
 	{
 		request_context->time_offset = params[MEDIA_SET_PARAM_TIME_OFFSET]->v.num.num;
-		media_set->time_offset = params[MEDIA_SET_PARAM_TIME_OFFSET]->v.num.num * 1000;
 	}
 
 	// clip times
