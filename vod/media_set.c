@@ -1,7 +1,7 @@
 #include "media_set.h"
 
 int64_t
-media_set_get_segment_time_millis(media_set_t* media_set, request_context_t* request_context )
+media_set_get_segment_time_millis(request_context_t* request_context , media_set_t* media_set)
 {
 	media_track_t* cur_track;
 	int64_t time_offset;
