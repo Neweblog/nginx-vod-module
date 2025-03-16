@@ -229,7 +229,6 @@ ngx_http_vod_parse_uri_file_name(
 	uint32_t pts_delay;
 	uint32_t version;
 	bool_t tracks_mask_updated;
-	language_id_t lang_id;
 
 	if (flags & PARSE_FILE_NAME_MULTI_STREAMS_PER_TYPE)
 	{
