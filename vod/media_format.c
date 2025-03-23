@@ -185,5 +185,12 @@ media_format_finalize_track(
 		media_info->extra_data.len = 0;
 	}
 
+	// output short (ISO-639-1) language codes when possible
+	if (media_info->tags.language != 0 && media_info->tags.lang_str.len == LANG_ISO639_3_LEN)
+	{
+		media_info->tags.lang_str.data = (u_char *)lang_get_rfc_5646_name(media_info->tags.language);
+		media_info->tags.lang_str.len = ngx_strlen(media_info->tags.lang_str.data);
+	}
+
 	return VOD_OK;
 }
