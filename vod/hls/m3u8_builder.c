@@ -1,6 +1,7 @@
 #include "m3u8_builder.h"
 #include "../manifest_utils.h"
 #include "../mp4/mp4_defs.h"
+#include "../udrm.h"
 
 #if (NGX_HAVE_OPENSSL_EVP)
 #include "../dash/edash_packager.h"
@@ -382,6 +383,35 @@ m3u8_builder_write_psshs(
 }
 #endif // NGX_HAVE_OPENSSL_EVP
 
+static void
+m3u8_builder_get_drm_signaling(
+	media_set_t* media_set,
+	vod_uint_t offset,
+	vod_str_t* dest)
+{
+	drm_system_info_t* cur_info;
+	drm_info_t* drm_info;
+	vod_str_t* signaling;
+
+	dest->len = 0;
+
+	drm_info = media_set->filtered_tracks[0].file_info.drm_info;
+	if (drm_info == NULL)
+	{
+		return;
+	}
+
+	for (cur_info = drm_info->pssh_array.first; cur_info < drm_info->pssh_array.last; cur_info++)
+	{
+		signaling = (vod_str_t*) ((u_char*) cur_info + offset);
+		if (signaling->len != 0)
+		{
+			*dest = *signaling;
+			return;
+		}
+	}
+}
+
 vod_status_t
 m3u8_builder_build_index_playlist(
 	request_context_t* request_context,
@@ -398,6 +428,7 @@ m3u8_builder_build_index_playlist(
 	segment_duration_item_t* last_item;
 	hls_encryption_type_t encryption_type;
 	segmenter_conf_t* segmenter_conf = media_set->segmenter_conf;
+	vod_str_t drm_signaling;
 	vod_str_t name_suffix;
 	vod_str_t extinf;
 	vod_str_t* suffix;
@@ -484,7 +515,12 @@ m3u8_builder_build_index_playlist(
 		(segment_durations.discontinuities + 1) +
 		sizeof(m3u8_footer);
 
-	if (encryption_type != HLS_ENC_NONE)
+	m3u8_builder_get_drm_signaling(media_set, offsetof(drm_system_info_t, hls_media_signaling), &drm_signaling);
+	if (drm_signaling.len > 0)
+	{
+		result_size += drm_signaling.len + 1;	// '\n'
+	}
+	else if (encryption_type != HLS_ENC_NONE)
 	{
 		result_size +=
 			sizeof(encryption_key_tag_method) - 1 +
@@ -587,7 +623,12 @@ m3u8_builder_build_index_playlist(
 		p = vod_copy(p, M3U8_HEADER_EVENT, sizeof(M3U8_HEADER_EVENT) - 1);
 	}
 
-	if (encryption_type != HLS_ENC_NONE)
+	if (drm_signaling.len > 0)
+	{
+		p = vod_copy(p, drm_signaling.data, drm_signaling.len);
+		*p++ = '\n';
+	}
+	else if (encryption_type != HLS_ENC_NONE)
 	{
 		p = vod_copy(p, encryption_key_tag_method, sizeof(encryption_key_tag_method) - 1);
 		switch (encryption_type)
@@ -1303,6 +1344,7 @@ m3u8_builder_build_master_playlist(
 	media_track_t* audio_codec_tracks[VOD_CODEC_ID_SUBTITLE - VOD_CODEC_ID_AUDIO];
 	media_track_t* cur_track;
 	vod_status_t rc;
+	vod_str_t drm_signaling;
 	uint32_t variant_set_count;
 	uint32_t variant_set_size;
 	uint32_t muxed_tracks;
@@ -1343,7 +1385,10 @@ m3u8_builder_build_master_playlist(
 	base_url_len = base_url->len + 1 + conf->index_file_name_prefix.len +			// 1 = /
 		MANIFEST_UTILS_TRACKS_SPEC_MAX_SIZE + sizeof(m3u8_url_suffix) - 1;
 
-	result_size = sizeof(m3u8_header);
+	m3u8_builder_get_drm_signaling(media_set, offsetof(drm_system_info_t, hls_master_signaling), &drm_signaling);
+
+	result_size = sizeof(m3u8_header) +
+		drm_signaling.len + 1;	// '\n'
 
 	max_video_stream_inf =
 		sizeof(m3u8_stream_inf_video) - 1 + 5 * VOD_INT32_LEN + MAX_CODEC_NAME_SIZE +
@@ -1448,6 +1493,12 @@ m3u8_builder_build_master_playlist(
 
 	// write the header
 	p = vod_copy(result->data, m3u8_header, sizeof(m3u8_header) - 1);
+
+	if (drm_signaling.len > 0)
+	{
+		p = vod_copy(p, drm_signaling.data, drm_signaling.len);
+		*p++ = '\n';
+	}
 
 	if (alternative_audio)
 	{
