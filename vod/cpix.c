@@ -10,8 +10,8 @@
 typedef struct {
 	ngx_str_node_t sn;
 	vod_int_t index;
-	vod_int_t start;	// seconds
-	vod_int_t end;		// seconds
+	int64_t start;
+	int64_t end;
 } cpix_period_t;
 
 typedef struct {
@@ -374,7 +374,7 @@ cpix_parse_get_period(cpix_parse_ctx_t* ctx, vod_str_t* id)
 
 	hash = ngx_crc32_short(id->data, id->len);
 
-	return (cpix_period_t *) ngx_str_rbtree_lookup(&ctx->keys_rbtree, id, hash);
+	return (cpix_period_t *) ngx_str_rbtree_lookup(&ctx->periods_rbtree, id, hash);
 }
 
 
@@ -385,6 +385,8 @@ cpix_parse_node_period(void* context, xmlNode* node)
 	cpix_parse_ctx_t* ctx = context;
 	cpix_period_t* period;
 	vod_int_t duration_int;
+	vod_int_t start_int;
+	vod_int_t end_int;
 	vod_str_t id;
 	vod_str_t index;
 	vod_str_t start;
@@ -418,30 +420,34 @@ cpix_parse_node_period(void* context, xmlNode* node)
 	if (start.len != 0)
 	{
 		// offset based period
-		period->start = xml_parse_duration(&start);
-		if (period->start < 0)
+		start_int = xml_parse_duration(&start);
+		if (start_int < 0)
 		{
 			vod_log_error(VOD_LOG_ERR, request_context->log, 0,
 				"cpix_parse_node_period: failed to parse startOffset \"%V\"", &start);
 			return VOD_BAD_DATA;
 		}
 
+		period->start = start_int * 1000;
+
 		if (end.len != 0)
 		{
-			period->end = xml_parse_duration(&end);
-			if (period->end < 0)
+			end_int = xml_parse_duration(&end);
+			if (end_int < 0)
 			{
 				vod_log_error(VOD_LOG_ERR, request_context->log, 0,
 					"cpix_parse_node_period: failed to parse endOffset \"%V\"", &end);
 				return VOD_BAD_DATA;
 			}
 
-			if (period->end <= period->start)
+			if (end_int <= start_int)
 			{
 				vod_log_error(VOD_LOG_ERR, request_context->log, 0,
-					"cpix_parse_node_period: endOffset \"%V\" is less than startOffset \"%V\"", &start);
+					"cpix_parse_node_period: endOffset \"%V\" is less than startOffset \"%V\"", &end, &start);
 				return VOD_BAD_DATA;
 			}
+
+			period->end = end_int * 1000;
 		}
 		else if (duration.len != 0)
 		{
@@ -453,7 +459,7 @@ cpix_parse_node_period(void* context, xmlNode* node)
 				return VOD_BAD_DATA;
 			}
 
-			period->end = period->start + duration_int;
+			period->end = period->start + duration_int * 1000;
 		}
 		else
 		{
@@ -707,8 +713,8 @@ cpix_parse(
 
 static bool_t
 cpix_usage_rules_match_media_info(
-	media_info_t* media_info,
-	cpix_usage_rules_t* rules)
+	cpix_usage_rules_t* rules,
+	media_info_t* media_info)
 {
 	uint32_t value;
 
@@ -757,10 +763,70 @@ cpix_usage_rules_match_media_info(
 }
 
 
+static bool_t
+cpix_usage_rules_match_period(
+	cpix_usage_rules_t* rules,
+	uint32_t clip_index,
+	uint64_t clip_time)
+{
+	ngx_list_part_t* part;
+	cpix_period_t** data;
+	cpix_period_t* period;
+	vod_uint_t i;
+
+	if (rules->periods.part.nelts == 0)
+	{
+		return TRUE;
+	}
+
+	part = &rules->periods.part;
+	data = part->elts;
+
+	for (i = 0 ;; i++)
+	{
+		if (i >= part->nelts)
+		{
+			if (part->next == NULL)
+			{
+				break;
+			}
+
+			part = part->next;
+			data = part->elts;
+			i = 0;
+		}
+
+		period = data[i];
+
+		if (period->index >= 0 && clip_index != period->index)
+		{
+			continue;
+		}
+
+		if (period->start >= 0 && clip_time < (uint64_t) period->start)
+		{
+			continue;
+		}
+
+		if (period->end >= 0 && clip_time >= (uint64_t) period->end)
+		{
+			continue;
+		}
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+
 static drm_info_t*
 cpix_get_track_info(
+	request_context_t* request_context,
+	cpix_data_t* cpix,
 	media_track_t* track,
-	cpix_data_t* cpix)
+	uint32_t clip_index,
+	uint64_t clip_time)
 {
 	cpix_content_key_t* cur;
 	cpix_content_key_t* data;
@@ -785,10 +851,22 @@ cpix_get_track_info(
 		}
 
 		cur = &data[i];
-		if (cpix_usage_rules_match_media_info(&track->media_info, &cur->usage_rules))
+
+		if (!cpix_usage_rules_match_media_info(&cur->usage_rules, &track->media_info))
 		{
-			return &cur->info;
+			continue;
 		}
+
+		if (!cpix_usage_rules_match_period(&cur->usage_rules, clip_index, clip_time))
+		{
+			continue;
+		}
+
+		vod_log_debug4(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
+			"cpix_get_track_info: assigned key \"%V\" to track: media_type=%uD, clip_index=%uD, clip_time=%L",
+			&cur->sn.str, track->media_info.media_type, clip_index, clip_time);
+
+		return &cur->info;
 	}
 
 	return NULL;
@@ -801,8 +879,10 @@ cpix_init_drm_info(
 	media_set_t* media_set,
 	cpix_data_t* cpix)
 {
+	media_clip_timing_t* timing = &media_set->timing;
 	media_track_t* track;
 	drm_info_t* drm_info;
+	uint32_t clip_index = 0;
 
 	for (track = media_set->filtered_tracks; track < media_set->filtered_tracks_end; track++)
 	{
@@ -811,7 +891,10 @@ cpix_init_drm_info(
 			continue;
 		}
 
-		drm_info = cpix_get_track_info(track, cpix);
+		// derive the clip index from clip_start_time
+		for (; clip_index + 1 < timing->total_count && track->clip_start_time >= (int64_t) timing->times[clip_index + 1]; clip_index++);
+
+		drm_info = cpix_get_track_info(request_context, cpix, track, clip_index, timing->times[clip_index]);
 		if (drm_info == NULL)
 		{
 			vod_log_error(VOD_LOG_ERR, request_context->log, 0,
