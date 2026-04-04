@@ -806,6 +806,11 @@ cpix_init_drm_info(
 
 	for (track = media_set->filtered_tracks; track < media_set->filtered_tracks_end; track++)
 	{
+		if (track->media_info.media_type > MEDIA_TYPE_AUDIO) // subtitles
+		{
+			continue;
+		}
+
 		drm_info = cpix_get_track_info(track, cpix);
 		if (drm_info == NULL)
 		{
