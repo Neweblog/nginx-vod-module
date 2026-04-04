@@ -268,7 +268,6 @@ filter_update_expanded_clip_times(media_set_t* media_set)
 			cur_track->original_clip_time = *original_times;
 		}
 	}
-
 }
 
 vod_status_t
