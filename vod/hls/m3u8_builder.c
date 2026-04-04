@@ -384,14 +384,12 @@ m3u8_builder_write_psshs(
 #endif // NGX_HAVE_OPENSSL_EVP
 
 static void
-m3u8_builder_get_drm_signaling(
+m3u8_builder_drm_media_signaling_get(
 	media_set_t* media_set,
-	vod_uint_t offset,
 	vod_str_t* dest)
 {
 	drm_system_info_t* cur_info;
 	drm_info_t* drm_info;
-	vod_str_t* signaling;
 
 	dest->len = 0;
 
@@ -403,13 +401,68 @@ m3u8_builder_get_drm_signaling(
 
 	for (cur_info = drm_info->pssh_array.first; cur_info < drm_info->pssh_array.last; cur_info++)
 	{
-		signaling = (vod_str_t*) ((u_char*) cur_info + offset);
-		if (signaling->len != 0)
+		if (cur_info->hls_media_signaling.len != 0)
 		{
-			*dest = *signaling;
+			*dest = cur_info->hls_media_signaling;
 			return;
 		}
 	}
+}
+
+static size_t
+m3u8_builder_drm_master_signaling_get_size(media_set_t* media_set)
+{
+	drm_system_info_t* cur_info;
+	media_track_t* track;
+	drm_info_t* drm_info;
+	size_t res = 0;
+
+	for (track = media_set->filtered_tracks; track < media_set->filtered_tracks_end; track++)
+	{
+		drm_info = track->file_info.drm_info;
+		if (drm_info == NULL)
+		{
+			continue;
+		}
+
+		for (cur_info = drm_info->pssh_array.first; cur_info < drm_info->pssh_array.last; cur_info++)
+		{
+			if (cur_info->hls_master_signaling.len != 0)
+			{
+				res += cur_info->hls_master_signaling.len + 1;	// '\n'
+			}
+		}
+	}
+
+	return res;
+}
+
+static u_char*
+m3u8_builder_drm_master_signaling_write(u_char* p, media_set_t* media_set)
+{
+	drm_system_info_t* cur_info;
+	media_track_t* track;
+	drm_info_t* drm_info;
+
+	for (track = media_set->filtered_tracks; track < media_set->filtered_tracks_end; track++)
+	{
+		drm_info = track->file_info.drm_info;
+		if (drm_info == NULL)
+		{
+			continue;
+		}
+
+		for (cur_info = drm_info->pssh_array.first; cur_info < drm_info->pssh_array.last; cur_info++)
+		{
+			if (cur_info->hls_master_signaling.len != 0)
+			{
+				p = vod_copy(p, cur_info->hls_master_signaling.data, cur_info->hls_master_signaling.len);
+				*p++ = '\n';
+			}
+		}
+	}
+
+	return p;
 }
 
 vod_status_t
@@ -515,7 +568,7 @@ m3u8_builder_build_index_playlist(
 		(segment_durations.discontinuities + 1) +
 		sizeof(m3u8_footer);
 
-	m3u8_builder_get_drm_signaling(media_set, offsetof(drm_system_info_t, hls_media_signaling), &drm_signaling);
+	m3u8_builder_drm_media_signaling_get(media_set, &drm_signaling);
 	if (drm_signaling.len > 0)
 	{
 		result_size += drm_signaling.len + 1;	// '\n'
@@ -1344,13 +1397,13 @@ m3u8_builder_build_master_playlist(
 	media_track_t* audio_codec_tracks[VOD_CODEC_ID_SUBTITLE - VOD_CODEC_ID_AUDIO];
 	media_track_t* cur_track;
 	vod_status_t rc;
-	vod_str_t drm_signaling;
 	uint32_t variant_set_count;
 	uint32_t variant_set_size;
 	uint32_t muxed_tracks;
 	uint32_t flags;
 	bool_t iframe_playlist;
 	size_t max_video_stream_inf;
+	size_t drm_signaling_size;
 	size_t base_url_len;
 	size_t result_size;
 	u_char* p;
@@ -1385,10 +1438,9 @@ m3u8_builder_build_master_playlist(
 	base_url_len = base_url->len + 1 + conf->index_file_name_prefix.len +			// 1 = /
 		MANIFEST_UTILS_TRACKS_SPEC_MAX_SIZE + sizeof(m3u8_url_suffix) - 1;
 
-	m3u8_builder_get_drm_signaling(media_set, offsetof(drm_system_info_t, hls_master_signaling), &drm_signaling);
+	drm_signaling_size = m3u8_builder_drm_master_signaling_get_size(media_set);
 
-	result_size = sizeof(m3u8_header) +
-		drm_signaling.len + 1;	// '\n'
+	result_size = sizeof(m3u8_header) + drm_signaling_size;
 
 	max_video_stream_inf =
 		sizeof(m3u8_stream_inf_video) - 1 + 5 * VOD_INT32_LEN + MAX_CODEC_NAME_SIZE +
@@ -1494,10 +1546,9 @@ m3u8_builder_build_master_playlist(
 	// write the header
 	p = vod_copy(result->data, m3u8_header, sizeof(m3u8_header) - 1);
 
-	if (drm_signaling.len > 0)
+	if (drm_signaling_size > 0)
 	{
-		p = vod_copy(p, drm_signaling.data, drm_signaling.len);
-		*p++ = '\n';
+		p = m3u8_builder_drm_master_signaling_write(p, media_set);
 	}
 
 	if (alternative_audio)
