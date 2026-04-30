@@ -391,7 +391,7 @@ m3u8_builder_drm_media_signaling_get(
 	drm_system_info_t* cur_info;
 	drm_info_t* drm_info;
 
-	dest->len = 0;
+	*dest = vod_null_string;
 
 	drm_info = track->file_info.drm_info;
 	if (drm_info == NULL)
