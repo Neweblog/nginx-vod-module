@@ -156,8 +156,8 @@ audio_encoder_free(
 		return;
 	}
 	
-	avcodec_close(state->encoder);
-	av_free(state->encoder);
+	avcodec_free_context(&state->encoder);
+	//av_free(state->encoder);
 }
 
 size_t
