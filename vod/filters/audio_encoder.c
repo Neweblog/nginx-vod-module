@@ -26,17 +26,31 @@ static char* aac_encoder_names[] = {
 static bool_t
 audio_encoder_is_format_supported(const AVCodec *codec, enum AVSampleFormat sample_fmt)
 {
-	const enum AVSampleFormat *p;
-
-	for (p = codec->sample_fmts; *p != AV_SAMPLE_FMT_NONE; p++)
-	{
-		if (*p == sample_fmt)
-		{
-			return TRUE;
-		}
-	}
-
-	return FALSE;
+  if (!codec)
+    return FALSE;
+  const void *config;
+  int ret = avcodec_get_supported_config(NULL, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, &config, NULL);
+  // 如果获取配置失败或没有支持的格式
+  if (ret < 0 || !config)
+    return FALSE;
+  const enum AVSampleFormat *p = (const enum AVSampleFormat *)config;
+  // 遍历支持的格式列表，以 AV_SAMPLE_FMT_NONE 结尾
+  for (; *p != AV_SAMPLE_FMT_NONE; p++)
+  {
+    if (*p == sample_fmt)
+    {
+        return TRUE;
+    }
+  }
+  return FALSE;//	const enum AVSampleFormat *p;
+//	for (p = codec->sample_fmts; *p != AV_SAMPLE_FMT_NONE; p++)
+//	{
+//		if (*p == sample_fmt)
+//		{
+//			return TRUE;
+//		}
+//	}
+//	return FALSE;
 }
 
 void
