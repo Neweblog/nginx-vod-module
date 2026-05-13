@@ -359,6 +359,111 @@ audio_filter_init_source(
 	return VOD_OK;
 }
 
+// static vod_status_t
+// audio_filter_init_sink(
+// 	request_context_t* request_context,
+// 	AVFilterGraph *filter_graph,
+// 	uint64_t channel_layout,
+// 	uint32_t sample_rate,
+// 	const u_char* sink_name,
+// 	audio_filter_sink_t* sink, 
+// 	AVFilterInOut** inputs)
+// {
+// 	AVFilterInOut* input_link;
+// 	enum AVSampleFormat out_sample_fmts[2];
+// 	int64_t out_channel_layouts[2];
+// 	int out_sample_rates[2];
+// 	int avrc;
+
+// 	// Note: matching the output to some reference track, may need to change in the future
+// 	//		if filters such as 'join' will be added
+
+// 	// create the buffer sink
+// 	avrc = avfilter_graph_create_filter(
+// 		&sink->buffer_sink,
+// 		buffersink_filter,
+// 		(char*)sink_name,
+// 		NULL,
+// 		NULL,
+// 		filter_graph);
+// 	if (avrc < 0)
+// 	{
+// 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
+// 			"audio_filter_init_sink: avfilter_graph_create_filter failed %d", avrc);
+// 		return VOD_ALLOC_FAILED;
+// 	}
+
+// 	// configure the buffer sink
+// 	out_sample_fmts[0] = sink->encoder->format;
+// 	out_sample_fmts[1] = -1;
+// 	avrc = av_opt_set_int_list(
+// 		sink->buffer_sink,
+// 		BUFFERSINK_PARAM_SAMPLE_FORMATS,
+// 		out_sample_fmts,
+// 		-1,
+// 		AV_OPT_SEARCH_CHILDREN);
+// 	if (avrc < 0)
+// 	{
+// 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
+// 			"audio_filter_init_sink: av_opt_set_int_list(sample formats) failed %d", avrc);
+// 		return VOD_UNEXPECTED;
+// 	}
+
+// 	out_channel_layouts[0] = channel_layout;
+// 	out_channel_layouts[1] = -1;
+// 	avrc = av_opt_set_int_list(
+// 		sink->buffer_sink,
+// 		BUFFERSINK_PARAM_CHANNEL_LAYOUTS,
+// 		out_channel_layouts,
+// 		-1,
+// 		AV_OPT_SEARCH_CHILDREN);
+// 	if (avrc < 0)
+// 	{
+// 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
+// 			"audio_filter_init_sink: av_opt_set_int_list(channel layouts) failed %d", avrc);
+// 		return VOD_UNEXPECTED;
+// 	}
+
+// 	out_sample_rates[0] = sample_rate;
+// 	out_sample_rates[1] = -1;
+// 	avrc = av_opt_set_int_list(
+// 		sink->buffer_sink,
+// 		BUFFERSINK_PARAM_SAMPLE_RATES,
+// 		out_sample_rates,
+// 		-1,
+// 		AV_OPT_SEARCH_CHILDREN);
+// 	if (avrc < 0)
+// 	{
+// 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
+// 			"audio_filter_init_sink: av_opt_set_int_list(sample rates) failed %d", avrc);
+// 		return VOD_UNEXPECTED;
+// 	}
+
+// 	// add to the inputs list
+// 	input_link = avfilter_inout_alloc();
+// 	if (input_link == NULL)
+// 	{
+// 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
+// 			"audio_filter_init_sink: avfilter_inout_alloc failed");
+// 		return VOD_ALLOC_FAILED;
+// 	}
+
+// 	input_link->filter_ctx = sink->buffer_sink;
+// 	input_link->pad_idx = 0;
+// 	input_link->next = *inputs;
+// 	*inputs = input_link;
+
+// 	input_link->name = av_strdup((const char*)sink_name);
+// 	if (input_link->name == NULL)
+// 	{
+// 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
+// 			"audio_filter_init_source: av_strdup failed");
+// 		return VOD_ALLOC_FAILED;
+// 	}
+
+// 	return VOD_OK;
+// }
+
 static vod_status_t
 audio_filter_init_sink(
 	request_context_t* request_context,
@@ -370,7 +475,7 @@ audio_filter_init_sink(
 	AVFilterInOut** inputs)
 {
 	AVFilterInOut* input_link;
-	enum AVSampleFormat out_sample_fmts[2];
+	enum AVSampleFormat out_sample_fmts;
 	int64_t out_channel_layouts[2];
 	int out_sample_rates[2];
 	int avrc;
@@ -394,48 +499,63 @@ audio_filter_init_sink(
 	}
 
 	// configure the buffer sink
-	out_sample_fmts[0] = sink->encoder->format;
-	out_sample_fmts[1] = -1;
-	avrc = av_opt_set_int_list(
+	
+	// 1. Set Sample Formats
+	out_sample_fmts = sink->encoder->format;
+	out_sample_fmts = -1; // Terminator
+	// Manually calculate size for av_opt_set_bin to avoid deprecated av_int_list_length_for_size
+	// The list has 2 elements, terminated by -1. We pass the whole array including terminator 
+	// or just the valid part? av_opt_set_int_list passes the whole array up to terminator.
+	// av_opt_set_bin expects the exact byte size.
+	// av_opt_set_int_list internally does: av_int_list_length(val, term) * sizeof(*(val))
+	// Here length is 1 (one valid element before -1)? No, it includes the terminator in the count 
+	// if the terminator is part of the array passed? 
+	// Let's look at av_opt_set_int_list source: it calculates length including the terminator? 
+	// Actually, av_int_list_length returns the number of elements INCLUDING the terminator.
+	// So for {fmt, -1}, length is 2. Size is 2 * sizeof(enum AVSampleFormat).
+	
+	avrc = av_opt_set_bin(
 		sink->buffer_sink,
 		BUFFERSINK_PARAM_SAMPLE_FORMATS,
-		out_sample_fmts,
-		-1,
+		(const uint8_t*)out_sample_fmts,
+		2 * sizeof(enum AVSampleFormat), // 2 elements: format and terminator
 		AV_OPT_SEARCH_CHILDREN);
 	if (avrc < 0)
 	{
 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
-			"audio_filter_init_sink: av_opt_set_int_list(sample formats) failed %d", avrc);
+			"audio_filter_init_sink: av_opt_set_bin(sample formats) failed %d", avrc);
 		return VOD_UNEXPECTED;
 	}
 
+	// 2. Set Channel Layouts
 	out_channel_layouts[0] = channel_layout;
-	out_channel_layouts[1] = -1;
-	avrc = av_opt_set_int_list(
+	out_channel_layouts[1] = -1; // Terminator
+	avrc = av_opt_set_bin(
 		sink->buffer_sink,
 		BUFFERSINK_PARAM_CHANNEL_LAYOUTS,
-		out_channel_layouts,
-		-1,
+		(const uint8_t*)out_channel_layouts,
+		2 * sizeof(int64_t), // 2 elements: layout and terminator
 		AV_OPT_SEARCH_CHILDREN);
 	if (avrc < 0)
 	{
 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
-			"audio_filter_init_sink: av_opt_set_int_list(channel layouts) failed %d", avrc);
+			"audio_filter_init_sink: av_opt_set_bin(channel layouts) failed %d", avrc);
 		return VOD_UNEXPECTED;
 	}
 
+	// 3. Set Sample Rates
 	out_sample_rates[0] = sample_rate;
-	out_sample_rates[1] = -1;
-	avrc = av_opt_set_int_list(
+	out_sample_rates[1] = -1; // Terminator
+	avrc = av_opt_set_bin(
 		sink->buffer_sink,
 		BUFFERSINK_PARAM_SAMPLE_RATES,
-		out_sample_rates,
-		-1,
+		(const uint8_t*)out_sample_rates,
+		2 * sizeof(int), // 2 elements: rate and terminator
 		AV_OPT_SEARCH_CHILDREN);
 	if (avrc < 0)
 	{
 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
-			"audio_filter_init_sink: av_opt_set_int_list(sample rates) failed %d", avrc);
+			"audio_filter_init_sink: av_opt_set_bin(sample rates) failed %d", avrc);
 		return VOD_UNEXPECTED;
 	}
 
